@@ -1,15 +1,15 @@
 ---
 name: danceflow
-description: "Accept a still image of all dancers in their starting formation + a song (MP3, name, or link) and produce a full timestamped choreography movement plan for every dancer. Outputs an interactive HTML dashboard (default) or PDF (on request) delivered via Telegram. Uses person detection, pose estimation, spatial layout analysis, and song rhythm/structure analysis."
-tags: [dance, choreography, pose-estimation, person-detection, rhythm-analysis, movement-planning, telegram, dashboard, music]
-version: 1.0
+description: "Accept a still image of all dancers in their starting formation + a song (MP3, name, or link) and produce a full timestamped choreography movement plan for every dancer. Primary output is a PDF (sent directly via Telegram) with embedded formation diagrams for every transition. A secondary interactive HTML dashboard with animated formation transitions is available on request via /web."
+tags: [dance, choreography, pose-estimation, person-detection, rhythm-analysis, movement-planning, telegram, pdf, animation]
+version: 2.0
 ---
 
 # DanceFlow — Formation-to-Choreography Planner
 
 ## 1. Skill Name
 
-**DanceFlow** — an AI agent skill that analyses a starting dancer formation image and a song to generate a full timestamped choreography movement plan for every detected dancer, delivered as an interactive HTML dashboard or PDF via Telegram.
+**DanceFlow** — an AI agent skill that detects dancers from a formation photo, analyses a song's structure and rhythm, and generates a complete timestamped choreography plan. Delivered as a **PDF directly in Telegram** with embedded formation diagrams, or as an **interactive animated HTML dashboard** on request.
 
 ---
 
@@ -17,289 +17,129 @@ version: 1.0
 
 | User Type | Use Case |
 |-----------|----------|
-| Dance instructors / choreographers | Plan and document full-song movement sequences before rehearsal |
-| Student dance groups | Get an AI-assisted movement plan for competition or event performances |
-| Performing arts students | Learn how to structure choreography relative to song structure |
-| Event and production managers | Review dance acts and plan stage usage efficiently |
-| Music and performing arts lecturers | Demonstrate how rhythm maps to movement in teaching |
+| Dance instructors / choreographers | Plan full-song movement sequences before rehearsal |
+| Student dance groups | Get an AI-assisted plan for competitions or events |
+| Performing arts students | Understand how rhythm maps to movement |
+| Event and production managers | Review and plan stage usage for dance acts |
 
-**Primary target:** Non-technical dance practitioners who need structured choreography plans but do not have formal notation training or choreography software.
+**Primary target:** Non-technical dance practitioners who need a ready-to-use choreography plan without notation training or specialist software.
 
 ---
 
 ## 3. Real-World Problem
 
-Planning choreography for a group of dancers is time-consuming and mentally demanding. A choreographer must simultaneously:
+Planning group choreography requires tracking every dancer's position, matching movements to song sections, and communicating the plan clearly to all dancers. Without a structured plan, rehearsals are slow and movements are easily forgotten.
 
-1. Track multiple dancers across the whole stage at all times.
-2. Match movement cues to the song's tempo, rhythm, and section changes (verse, chorus, bridge, drop).
-3. Ensure formations change smoothly without collision or visual imbalance.
-4. Communicate the plan clearly to every dancer by name or position.
-
-Without a structured plan, rehearsals are inefficient. Dancers repeat the same sections, movements are verbally described and easily forgotten, and formation transitions are improvised rather than designed.
-
-**DanceFlow** solves this by:
-- Detecting all dancers and their starting positions from a single photo.
-- Analysing the song structure and tempo from the uploaded MP3 or song name.
-- Generating a complete, timestamped movement plan for every dancer.
-- Presenting the plan as a visual HTML dashboard or PDF that any dancer can read without technical knowledge.
+**DanceFlow** solves this by detecting all dancers from a single photo, analysing the song, generating a beat-level movement plan, and delivering it as a visual PDF or animated dashboard.
 
 ---
 
 ## 4. Input Format
 
-### Primary Input A — Dancer Formation Image
-
-| Property | Details |
-|----------|---------|
-| Format | JPG, PNG, WebP |
-| Content | A still photo of all dancers standing in their starting positions on stage or rehearsal floor |
-| Quality requirement | Must show full or near-full body of all dancers; overhead or frontal view preferred |
-| Minimum resolution | 640 × 480 px recommended |
-| Accepted views | Frontal stage view, slight elevated angle, top-down floor view |
-
-**What the agent extracts from the image:**
-- Total number of dancers detected.
-- Relative X/Y position of each dancer on the stage plane (normalised 0–1 grid).
-- Rough body orientation (facing front, side, or back).
-- Initial formation type (line, V-shape, cluster, grid, diagonal, scattered).
-- Image quality indicators: blur score, brightness, occlusion level.
-
-### Primary Input B — Song
-
-| Method | Format | Notes |
-|--------|--------|-------|
-| MP3 upload | `.mp3` file via Telegram | Agent analyses audio for BPM, key sections |
-| Song name | Plain text, e.g. `"Shape of You – Ed Sheeran"` | Agent uses known song structure data |
-| Song link | YouTube, Spotify, or SoundCloud URL | Agent fetches metadata and structure |
-
-**What the agent extracts from the song:**
-- BPM (beats per minute).
-- Total song duration.
-- Song sections with timestamps: intro, verse, pre-chorus, chorus, bridge, drop, outro.
-- Rhythmic character per section (slow/fast, smooth/sharp, heavy/light).
-- Suggested movement energy level per section (calm, moderate, high-energy, climax).
-
-### Optional Metadata (user may provide in Telegram message)
-
-| Field | Example | Effect |
-|-------|---------|--------|
-| Dance style hint | `"contemporary"`, `"hip-hop"`, `"K-pop"`, `"ballet"` | Adjusts movement vocabulary used in the plan |
-| Dancer labels | `"Dancer 1 = Aisha, Dancer 2 = Ben"` | Personalises the output with names instead of numbered labels |
-| Stage dimensions | `"8m wide x 6m deep"` | Scales the position grid to actual measurements |
-| Output format | `"PDF"` | Produces PDF output instead of the default HTML dashboard |
-| Number of sections | `"focus on chorus only"` | Restricts output to a specific part of the song |
+| Input | Format | Notes |
+|-------|--------|-------|
+| Formation image | JPG, PNG, WebP | Full-body shot of all dancers in starting positions; frontal or elevated view preferred |
+| Song | MP3 upload, song name, or URL | YouTube / Spotify / SoundCloud accepted |
+| Dance style *(optional)* | Text | e.g. `hip-hop`, `K-pop`, `contemporary` — adjusts movement vocabulary |
+| Dancer names *(optional)* | Text | e.g. `D1=Ana, D2=Ben` — replaces numbered labels |
+| Stage size *(optional)* | Text | e.g. `8m x 6m` — scales the position grid |
+| Output format *(optional)* | `/web` command | Requests interactive HTML instead of default PDF |
 
 ---
 
 ## 5. CV / Image-Processing Method
 
-### A. Image Preprocessing Pipeline
-
-Raw photos taken in rehearsal spaces are often poorly lit, slightly skewed, or cluttered with background objects. The following preprocessing steps are applied before any detection task.
+### A. Image Preprocessing
 
 | Step | Method | Purpose |
 |------|--------|---------|
-| 1. Blur detection | Laplacian variance score | Flag image if variance < 100; warn user if too blurry |
-| 2. Brightness normalisation | Histogram equalisation (CLAHE) | Correct underexposed or overexposed rehearsal photos |
-| 3. Grayscale conversion | OpenCV `cvtColor(BGR2GRAY)` | Reduce noise before edge and contour detection |
-| 4. Denoising | `fastNlMeansDenoising` | Remove compression artefacts and grain |
-| 5. Contrast enhancement | Adaptive thresholding or CLAHE | Improve body-background separation |
-| 6. Background segmentation | GrabCut or thresholding | Isolate the stage floor from walls and props |
-| 7. Resolution upscale | Bicubic interpolation if < 640px height | Ensure person detector has sufficient pixel detail |
+| Blur detection | Laplacian variance | Warn if score < 100; request clearer photo |
+| Brightness normalisation | CLAHE (LAB colour space) | Fix underexposed rehearsal photos |
+| Denoising | `fastNlMeansDenoising` | Remove grain and compression artefacts |
+| Resolution upscale | Bicubic interpolation | Ensure minimum 640px height for detection |
 
 ```python
 import cv2
-import numpy as np
 
-def preprocess_formation_image(image_path):
+def preprocess(image_path):
     img = cv2.imread(image_path)
-
-    # Step 1 — Blur detection
-    gray_raw = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    blur_score = cv2.Laplacian(gray_raw, cv2.CV_64F).var()
+    # Blur check
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
     if blur_score < 100:
-        print(f"WARNING: Image may be too blurry (score={blur_score:.1f}). Results may be less accurate.")
-
-    # Step 2 — Brightness normalisation
+        print(f"WARNING: Blurry image (score={blur_score:.1f})")
+    # Brightness normalisation via CLAHE
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    l = clahe.apply(l)
+    l = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)).apply(l)
     img = cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2BGR)
-
-    # Step 3+4 — Grayscale + Denoising
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.fastNlMeansDenoising(gray, h=10)
-
-    # Step 7 — Resolution upscale if needed
+    # Denoise
+    img = cv2.fastNlMeansDenoisingColored(img, h=10)
+    # Upscale if needed
     h, w = img.shape[:2]
     if h < 640:
-        scale = 640 / h
-        img = cv2.resize(img, (int(w * scale), 640), interpolation=cv2.INTER_CUBIC)
-
+        img = cv2.resize(img, (int(w * 640/h), 640), interpolation=cv2.INTER_CUBIC)
     return img, blur_score
 ```
 
----
+### B. Person Detection
 
-### B. Person Detection — Counting and Locating All Dancers
-
-**Method:** YOLOv8 (pretrained COCO model) or MediaPipe Person Segmentation.
-
-- Detect all `person` class bounding boxes in the image.
-- Filter out detections with confidence < 0.5 to reduce false positives (chairs, props).
-- Assign each dancer a numbered label: `D1`, `D2`, `D3`, etc., ordered left-to-right by bounding box centre X.
-- Record normalised stage coordinates `(x_norm, y_norm)` where `(0,0)` = top-left and `(1,1)` = bottom-right of the detected stage floor region.
+**Method:** YOLOv8 pretrained (COCO). Detects all `person` class bounding boxes with confidence > 0.5. Dancers sorted left-to-right and labelled `D1`–`DN`. Normalised stage coordinates `(x_norm, y_norm)` recorded per dancer.
 
 ```python
-# Pseudocode — YOLOv8 detection
 from ultralytics import YOLO
-
 model = YOLO("yolov8n.pt")
-results = model(preprocessed_image)
 
-dancers = []
-for box in results[0].boxes:
-    if box.cls == 0 and box.conf > 0.5:   # class 0 = person
-        cx = (box.xyxy[0] + box.xyxy[2]) / 2   # centre X
-        cy = (box.xyxy[1] + box.xyxy[3]) / 2   # centre Y
-        dancers.append({"id": None, "cx": cx, "cy": cy, "bbox": box.xyxy})
-
-# Sort left-to-right, assign IDs
-dancers.sort(key=lambda d: d["cx"])
-for i, d in enumerate(dancers):
-    d["id"] = f"D{i+1}"
+def detect_dancers(img):
+    results = model(img)
+    dancers = []
+    for box in results[0].boxes:
+        if int(box.cls) == 0 and float(box.conf) > 0.5:
+            cx = float((box.xyxy[0][0] + box.xyxy[0][2]) / 2)
+            cy = float((box.xyxy[0][1] + box.xyxy[0][3]) / 2)
+            dancers.append({"cx": cx, "cy": cy})
+    dancers.sort(key=lambda d: d["cx"])
+    h, w = img.shape[:2]
+    for i, d in enumerate(dancers):
+        d["id"] = f"D{i+1}"
+        d["x_norm"] = round(d["cx"] / w, 3)
+        d["y_norm"] = round(d["cy"] / h, 3)
+    return dancers
 ```
 
----
+### C. Pose Estimation
 
-### C. Pose Estimation — Initial Body Orientation
+**Method:** MediaPipe Pose on each dancer's cropped bounding box. Extracts facing direction (front/side/back) and initial posture (standing, crouched, arms raised, etc.) from landmark visibility scores.
 
-**Method:** MediaPipe Pose (single-frame, multi-person via bounding box crop).
+### D. Formation Classification
 
-For each detected dancer bounding box:
-1. Crop the image to the bounding box region (with 10% padding).
-2. Run MediaPipe Pose on the crop.
-3. Extract key landmarks: shoulders, hips, knees, feet, wrists.
-4. Determine facing direction: frontal, side-on, or back-facing (by comparing shoulder and hip keypoint visibility scores).
-5. Detect initial posture: standing upright, crouched, arms raised, arms open, etc.
+**Method:** Geometric analysis of `(x_norm, y_norm)` coordinates matched against formation templates.
 
-**Output per dancer:**
-
-```json
-{
-  "id": "D1",
-  "position": {"x_norm": 0.22, "y_norm": 0.60},
-  "facing": "front",
-  "posture": "standing_arms_down",
-  "confidence": 0.87
-}
-```
-
----
-
-### D. Formation Analysis — Spatial Layout Recognition
-
-**Method:** Geometric clustering + pattern matching against known formation templates.
-
-After all dancer positions are recorded, the agent maps their `(x_norm, y_norm)` coordinates and classifies the formation:
-
-| Formation Name | Description | Detection Method |
-|----------------|-------------|-----------------|
-| Straight line | All dancers along one horizontal or vertical axis | Linear regression R² > 0.95 |
-| V-shape / wedge | Lead dancer forward, two wings extending back | Triangle vertex detection |
-| Grid / matrix | Rows and columns of equal spacing | Row/column clustering |
-| Diagonal | Line at 30–60° angle across stage | Angle of linear regression slope |
-| Cluster | Grouped near centre with irregular spacing | Low variance in both X and Y |
-| Scattered | High variance in both axes, no clear pattern | No template matched |
-| Circle / arc | Curved arrangement | Fit to ellipse equation |
-
-The formation label is included in the output and influences how transition movements are suggested (e.g., a line formation transitions naturally to a V by having the centre dancer step forward).
-
----
+| Formation | Detection Logic |
+|-----------|----------------|
+| Straight line | Linear regression R² > 0.95 |
+| V-shape | Triangle vertex detection — one dancer forward |
+| Grid | Row/column clustering with equal spacing |
+| Diagonal | Regression slope 30–60° |
+| Circle / arc | Fit to ellipse equation |
+| Scattered | No template matched (high variance both axes) |
 
 ### E. Song Structure Analysis
 
-**Method:** BPM detection + section labelling.
+**Method:** `librosa` for MP3 uploads (BPM + energy-based section boundaries). Known song structure lookup for named songs or links.
 
-If MP3 is uploaded:
-- Use `librosa` to compute BPM and detect beat frames.
-- Use `librosa.effects.split` to detect energy-based section boundaries.
-- Label sections as intro / verse / chorus / bridge / outro based on energy envelope and repetition patterns.
-
-If song name or link is provided:
-- Look up known song structure from music knowledge or web search.
-- Use BPM and section timestamps from the knowledge base.
-
-**Output: Song Map**
-
+**Output per song:**
 ```json
 {
-  "title": "Shape of You",
-  "bpm": 96,
-  "duration_s": 234,
+  "title": "Shape of You", "artist": "Ed Sheeran",
+  "bpm": 96, "duration_s": 234,
   "sections": [
-    {"label": "Intro",   "start_s": 0,   "end_s": 15,  "energy": "low",    "rhythm": "smooth"},
-    {"label": "Verse 1", "start_s": 15,  "end_s": 47,  "energy": "medium", "rhythm": "groove"},
-    {"label": "Pre-Ch",  "start_s": 47,  "end_s": 63,  "energy": "rising", "rhythm": "building"},
-    {"label": "Chorus",  "start_s": 63,  "end_s": 95,  "energy": "high",   "rhythm": "driving"},
-    {"label": "Verse 2", "start_s": 95,  "end_s": 127, "energy": "medium", "rhythm": "groove"},
-    {"label": "Chorus",  "start_s": 127, "end_s": 159, "energy": "high",   "rhythm": "driving"},
-    {"label": "Bridge",  "start_s": 159, "end_s": 191, "energy": "peak",   "rhythm": "intense"},
-    {"label": "Chorus",  "start_s": 191, "end_s": 223, "energy": "high",   "rhythm": "driving"},
-    {"label": "Outro",   "start_s": 223, "end_s": 234, "energy": "fading", "rhythm": "smooth"}
+    {"label": "Intro",   "start_s": 0,   "end_s": 15,  "energy": "low"},
+    {"label": "Verse 1", "start_s": 15,  "end_s": 47,  "energy": "medium"},
+    {"label": "Chorus",  "start_s": 63,  "end_s": 95,  "energy": "high"},
+    {"label": "Bridge",  "start_s": 159, "end_s": 191, "energy": "peak"},
+    {"label": "Outro",   "start_s": 223, "end_s": 234, "energy": "low"}
   ]
-}
-```
-
----
-
-### F. Movement Plan Generation
-
-**Method:** Rule-based choreography mapping + AI language model reasoning.
-
-Using the dancer positions, formation type, initial postures, and song map, the agent generates a movement plan structured as follows:
-
-#### Movement Vocabulary by Dance Style
-
-| Style | Suggested Movement Types |
-|-------|--------------------------|
-| Hip-hop | Bounce, isolations, footwork, wave, freeze, floor drop |
-| Contemporary | Flow, reach, fall-and-recover, spiral, swing, stillness |
-| K-pop | Synchronized arm choreo, point, formation snap, side-step |
-| Ballet | Port de bras, tendu, arabesque, promenade, développé |
-| Generic/unspecified | Step-touch, open arms, turn, level change, approach/retreat |
-
-#### Formation Transition Rules
-
-| From | To | Trigger | Transition Style |
-|------|----|---------|-----------------|
-| Line | V-shape | Chorus hit | Centre dancer steps forward on beat 1 |
-| Scattered | Grid | Verse start | Dancers walk to grid marks over 8 beats |
-| V-shape | Circle | Bridge | Wings arc outward, lead stays centre |
-| Any | Freeze | Song pause or silence | All dancers hold last pose |
-| Grid | Diagonal | Chorus climax | Left column steps downstage over 4 beats |
-
-#### Timestamped Movement Plan Structure (per dancer, per section)
-
-```json
-{
-  "dancer_id": "D2",
-  "section": "Chorus",
-  "start_s": 63,
-  "end_s": 95,
-  "movements": [
-    {"beat": 1,  "time_s": 63.0, "action": "Step right, open arms wide"},
-    {"beat": 3,  "time_s": 64.3, "action": "Clap overhead, weight shift left"},
-    {"beat": 5,  "time_s": 65.6, "action": "Pivot 180°, face upstage"},
-    {"beat": 9,  "time_s": 68.1, "action": "Level drop to crouch"},
-    {"beat": 13, "time_s": 70.7, "action": "Rise on beat, arms sweep low to high"},
-    {"beat": 17, "time_s": 73.2, "action": "Isolation: chest pop left then right"},
-    {"beat": 25, "time_s": 78.3, "action": "Cross stage to position (0.55, 0.40)"},
-    {"beat": 33, "time_s": 83.4, "action": "Freeze: hold arabesque-style balance"}
-  ],
-  "formation_at_section_end": "V-shape"
 }
 ```
 
@@ -308,486 +148,610 @@ Using the dancer positions, formation type, initial postures, and song map, the 
 ## 6. Step-by-Step Workflow
 
 ```
-[USER in Telegram]
+USER sends image + song via Telegram
   │
-  ├── Sends: formation image + song (MP3 / name / link) + optional metadata
+  ├─ STEP 1  Validate image (blur check, person present?)
+  ├─ STEP 2  Preprocess image (CLAHE, denoise, upscale)
+  ├─ STEP 3  Detect dancers → assign D1–DN with (x_norm, y_norm)
+  ├─ STEP 4  Pose estimation per dancer → posture + facing
+  ├─ STEP 5  Classify starting formation
+  ├─ STEP 6  Analyse song → BPM, sections, energy levels
+  ├─ STEP 7  Generate movement plan (beat-level, per dancer, per section)
+  ├─ STEP 8  Compute formation state per section → (x_norm, y_norm) per dancer
   │
-  ▼
-[STEP 1 — Image Validation]
-  │  Check image is readable, not too blurry, and contains at least 1 person.
-  │  If blurry: send warning. If no persons detected: ask user to resend a clearer image.
-  ▼
-[STEP 2 — Image Preprocessing]
-  │  CLAHE brightness normalisation → denoising → resolution upscale if needed.
-  ▼
-[STEP 3 — Person Detection]
-  │  YOLOv8 detects all dancers. Assigns IDs D1–DN left to right.
-  │  Records bounding boxes and normalised stage coordinates.
-  ▼
-[STEP 4 — Pose Estimation]
-  │  MediaPipe Pose runs on each dancer crop.
-  │  Records facing direction and initial posture for each dancer.
-  ▼
-[STEP 5 — Formation Classification]
-  │  Geometric analysis of dancer positions → formation label.
-  ▼
-[STEP 6 — Song Analysis]
-  │  If MP3: librosa BPM + section detection.
-  │  If name/link: retrieve known song structure.
-  │  Outputs: BPM, duration, section timestamps, energy levels.
-  ▼
-[STEP 7 — Movement Plan Generation]
-  │  Match dance style (from hint or inferred from formation/song genre).
-  │  For each song section: assign movements to each dancer at beat-level timestamps.
-  │  Plan formation transitions between sections.
-  │  Respect initial positions from Step 3.
-  ▼
-[STEP 8 — Output Generation]
-  │  Default: Generate interactive HTML dashboard (see Section 9).
-  │  If user requested PDF: convert HTML to PDF via WeasyPrint or Puppeteer.
-  ▼
-[STEP 9 — Telegram Delivery]
-  │  Send HTML file (or PDF) directly to the Telegram chat.
-  │  Include a plain-text summary message with key facts:
-  │    – Number of dancers detected
-  │    – Song BPM and duration
-  │    – Formation detected
-  │    – Number of movement cues generated
-  └── Done.
+  ├─ DEFAULT OUTPUT
+  │    Render formation diagrams as SVG → rasterise to PNG via cairosvg
+  │    Build PDF (WeasyPrint): cover + section pages + transition pages
+  │    Send PDF to Telegram chat
+  │
+  └─ IF /web requested
+       Build self-contained HTML dashboard with animated SVG stage
+       Send HTML file to Telegram chat
 ```
 
 ---
 
 ## 7. Output Format
 
-### A. Plain-Text Summary (sent with file)
+### A. Telegram Summary Message (always sent first)
 
 ```
 ✅ DanceFlow Plan Ready
 
-🎵 Song: Shape of You – Ed Sheeran (BPM: 96, Duration: 3:54)
-👥 Dancers detected: 5 (D1–D5)
-🗺 Starting formation: Diagonal line
-📋 Movement cues generated: 143 across 9 sections
+🎵 Shape of You – Ed Sheeran  |  BPM: 96  |  3:54
+👥 5 dancers detected  |  Starting: Diagonal line
+📋 147 movement cues across 9 sections
 
-Your choreography dashboard is attached.
-Open the HTML file in any browser, or request PDF with /pdf
+📄 Choreography PDF attached.
+Type /web for the interactive animated dashboard.
 ```
 
 ---
 
-### B. HTML Dashboard
+### B. Primary Output — PDF (sent directly in Telegram)
 
-The HTML dashboard is a self-contained single file with no external dependencies.
+Generated via **WeasyPrint** (Python). A3 landscape. Sent as `choreography_plan.pdf`.
 
-#### Dashboard Sections
+#### Page Structure
 
-**Section 1 — Stage Map (Formation View)**
-- SVG top-down view of the stage floor (rectangle).
-- Each dancer shown as a labelled dot (D1–D5) at their detected starting position.
-- Formation outline drawn as a connecting shape (line, V, circle, etc.).
-- Click a dancer dot to highlight their movements in the timeline below.
+| Page | Content |
+|------|---------|
+| 1 — Cover | Song title, artist, BPM, duration, dancer count, starting formation name, starting formation diagram |
+| 2 — Song Overview | Colour-coded section timeline bar + energy level per section |
+| 3…N — Section Pages | One page per song section: movement table (dancer rows × beat columns) + formation diagram for that section |
+| N+1…end — Transition Pages | One page per formation change: **before formation plot → after formation plot** side by side with dancer-labelled dots, timestamp, and section label |
 
-**Section 2 — Song Timeline Bar**
-- Horizontal bar spanning full song duration.
-- Colour-coded sections: intro (grey), verse (blue), chorus (orange), bridge (red), outro (grey).
-- Beat markers drawn as tick marks.
-- Hover over any section to see energy level and rhythm character.
+#### Formation Diagram Specification (embedded in PDF)
 
-**Section 3 — Movement Timeline Grid**
-- Rows: one per dancer (D1 to DN).
-- Columns: song sections with timestamp labels.
-- Each cell contains the key movement cues for that dancer in that section.
-- Cells colour-coded by movement energy: low (light blue), medium (teal), high (orange), climax (red).
-- Click any cell to expand movement detail (beat-by-beat list).
+Each formation diagram is a top-down SVG stage view rendered to PNG via `cairosvg`:
 
-**Section 4 — Formation Transition Cards**
-- One card per section boundary where formation changes.
-- Shows: before-formation → after-formation, which dancers move, timestamp, direction of travel.
-- Each card has a mini before/after SVG diagram.
+- Rectangle = stage floor (proportional to stage dimensions if provided).
+- Filled circle per dancer, labelled with ID or name.
+- Connecting lines drawn to indicate the formation shape (line, V, grid, circle, etc.).
+- Colour coding: current section = filled dark circles; previous section = ghost circles (grey, lower opacity) for before/after comparison on transition pages.
 
-**Section 5 — Export Controls**
-- `Download PDF` button — triggers PDF export via browser print (`@media print`).
-- `Copy Full Plan` button — copies the complete movement plan as plain text to clipboard.
-- `Reset Filters` button — clears any dancer or section filters.
+```python
+import cairosvg
 
-#### HTML Template Structure
+def render_formation_svg(dancers, stage_w=500, stage_h=300,
+                          ghost_dancers=None, label="Formation"):
+    """
+    dancers:       list of {id, x_norm, y_norm, name}
+    ghost_dancers: list of same structure for before-state (shown as grey ghosts)
+    Returns PNG bytes for embedding in PDF.
+    """
+    PAD = 40
+    circles = ""
+
+    # Ghost positions (before-state)
+    if ghost_dancers:
+        for d in ghost_dancers:
+            px = PAD + d["x_norm"] * (stage_w - PAD*2)
+            py = PAD + d["y_norm"] * (stage_h - PAD*2)
+            circles += f'''
+              <circle cx="{px}" cy="{py}" r="18"
+                      fill="#CCCCCC" opacity="0.5"/>
+              <text x="{px}" y="{py+4}" text-anchor="middle"
+                    font-size="11" fill="#999">{d["id"]}</text>'''
+
+    # Arrows from ghost to current (transition only)
+    if ghost_dancers:
+        for g, c in zip(ghost_dancers, dancers):
+            gx = PAD + g["x_norm"] * (stage_w - PAD*2)
+            gy = PAD + g["y_norm"] * (stage_h - PAD*2)
+            cx2 = PAD + c["x_norm"] * (stage_w - PAD*2)
+            cy2 = PAD + c["y_norm"] * (stage_h - PAD*2)
+            circles += f'''
+              <line x1="{gx}" y1="{gy}" x2="{cx2}" y2="{cy2}"
+                    stroke="#D4783A" stroke-width="1.5"
+                    stroke-dasharray="4,3" marker-end="url(#arr)"/>'''
+
+    # Current positions
+    for d in dancers:
+        px = PAD + d["x_norm"] * (stage_w - PAD*2)
+        py = PAD + d["y_norm"] * (stage_h - PAD*2)
+        name = d.get("name", d["id"])
+        circles += f'''
+          <circle cx="{px}" cy="{py}" r="18"
+                  fill="#3D3D3D" stroke="#fff" stroke-width="2"/>
+          <text x="{px}" y="{py+4}" text-anchor="middle"
+                font-size="11" font-weight="700" fill="#fff">{name}</text>'''
+
+    svg = f'''<svg width="{stage_w}" height="{stage_h}"
+                   xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr" markerWidth="6" markerHeight="6"
+                refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#D4783A"/>
+        </marker>
+      </defs>
+      <rect x="{PAD}" y="{PAD}"
+            width="{stage_w-PAD*2}" height="{stage_h-PAD*2}"
+            fill="#F5F2EE" stroke="#C0BAB3" stroke-width="2" rx="4"/>
+      <text x="{stage_w/2}" y="{stage_h-10}" text-anchor="middle"
+            font-size="11" fill="#C0BAB3">STAGE FRONT</text>
+      <text x="{stage_w/2}" y="24" text-anchor="middle"
+            font-size="12" font-weight="600" fill="#3D3D3D">{label}</text>
+      {circles}
+    </svg>'''
+
+    return cairosvg.svg2png(bytestring=svg.encode())
+```
+
+#### PDF Generation
+
+```python
+from weasyprint import HTML, CSS
+
+def build_pdf(song_info, dancers, movement_plan, formation_states, output_path):
+    """
+    formation_states: list of {section_label, dancers: [{id, x_norm, y_norm}]}
+    """
+    pages_html = []
+
+    # Cover page
+    start_png = render_formation_svg(
+        formation_states[0]["dancers"], label="Starting Formation"
+    )
+    cover_img_b64 = base64.b64encode(start_png).decode()
+    pages_html.append(f"""
+      <div class="page cover">
+        <h1>DanceFlow Choreography Plan</h1>
+        <h2>{song_info['title']} — {song_info['artist']}</h2>
+        <p>BPM: {song_info['bpm']} &nbsp;|&nbsp; Duration: {song_info['duration_s']}s
+           &nbsp;|&nbsp; {len(dancers)} dancers</p>
+        <img src="data:image/png;base64,{cover_img_b64}" class="formation-img"/>
+      </div>""")
+
+    # One page per section
+    for i, section in enumerate(song_info["sections"]):
+        state = next((s for s in formation_states
+                      if s["section_label"] == section["label"]), None)
+        formation_png = render_formation_svg(
+            state["dancers"] if state else dancers,
+            label=f"{section['label']} Formation"
+        ) if state else b""
+        img_b64 = base64.b64encode(formation_png).decode() if formation_png else ""
+
+        # Movement table rows
+        rows = ""
+        for dancer in dancers:
+            plan = next((p for p in movement_plan
+                         if p["dancer_id"] == dancer["id"]
+                         and p["section"] == section["label"]), None)
+            cues = ""
+            if plan:
+                cues = " &nbsp;·&nbsp; ".join(
+                    f"<b>B{m['beat']}</b> {m['action']}"
+                    for m in plan["movements"]
+                )
+            rows += f"""
+              <tr>
+                <td class="dancer-cell">{dancer.get('name', dancer['id'])}</td>
+                <td>{cues or "—"}</td>
+              </tr>"""
+
+        pages_html.append(f"""
+          <div class="page section-page">
+            <div class="section-header energy-{section['energy']}">
+              {section['label']}
+              <span class="ts">{section['start_s']}s – {section['end_s']}s</span>
+            </div>
+            <div class="section-body">
+              <table class="movement-table">{rows}</table>
+              {"<img src='data:image/png;base64," + img_b64 + "' class='formation-img'/>" if img_b64 else ""}
+            </div>
+          </div>""")
+
+    # Transition pages (before → after)
+    for i in range(1, len(formation_states)):
+        prev = formation_states[i-1]
+        curr = formation_states[i]
+        before_after_png = render_formation_svg(
+            curr["dancers"],
+            ghost_dancers=prev["dancers"],
+            label=f"{prev['section_label']} → {curr['section_label']}"
+        )
+        ba_b64 = base64.b64encode(before_after_png).decode()
+        section_info = next((s for s in song_info["sections"]
+                              if s["label"] == curr["section_label"]), {})
+        pages_html.append(f"""
+          <div class="page transition-page">
+            <h3>Formation Transition</h3>
+            <p class="ts-label">At {section_info.get('start_s','?')}s —
+               {prev['section_label']} → {curr['section_label']}</p>
+            <img src="data:image/png;base64,{ba_b64}" class="formation-img-large"/>
+            <p class="legend">
+              <span class="ghost-dot"></span> Previous positions &nbsp;&nbsp;
+              <span class="live-dot"></span> New positions &nbsp;&nbsp;
+              <span class="arrow-line">- - ▶</span> Movement path
+            </p>
+          </div>""")
+
+    css = CSS(string="""
+      @page { size: A3 landscape; margin: 15mm; }
+      body { font-family: system-ui, sans-serif; color: #2C2C2C; margin: 0; }
+      .page { page-break-after: always; padding: 10px; }
+      .cover { text-align: center; padding-top: 40px; }
+      .cover h1 { font-size: 28px; margin-bottom: 8px; }
+      .cover h2 { font-size: 20px; color: #666; font-weight: 400; }
+      .section-header { font-size: 18px; font-weight: 700; padding: 8px 14px;
+                        border-radius: 6px; margin-bottom: 14px; color: #fff; }
+      .energy-low    { background: #9E9E9E; }
+      .energy-medium { background: #5B9BD5; }
+      .energy-high   { background: #E07B39; }
+      .energy-peak   { background: #C0392B; }
+      .energy-rising { background: #7B68EE; }
+      .energy-fading { background: #9E9E9E; }
+      .section-body { display: flex; gap: 20px; align-items: flex-start; }
+      .movement-table { flex: 1; border-collapse: collapse; font-size: 12px; }
+      .movement-table td { border: 1px solid #E2DDD7; padding: 7px 10px;
+                           vertical-align: top; }
+      .dancer-cell { font-weight: 700; white-space: nowrap; width: 80px;
+                     background: #F5F2EE; }
+      .formation-img { width: 320px; border: 1px solid #E2DDD7;
+                       border-radius: 8px; }
+      .formation-img-large { width: 100%; max-width: 700px; display: block;
+                              margin: 16px auto;
+                              border: 1px solid #E2DDD7; border-radius: 8px; }
+      .ts { font-size: 13px; font-weight: 400; margin-left: 12px; opacity: 0.85; }
+      .ts-label { font-size: 14px; color: #666; margin: 4px 0 16px; }
+      .transition-page { text-align: center; }
+      .transition-page h3 { font-size: 20px; margin-bottom: 4px; }
+      .legend { font-size: 12px; color: #888; margin-top: 10px; }
+      .ghost-dot { display: inline-block; width: 12px; height: 12px;
+                   border-radius: 50%; background: #CCC; opacity: 0.5; }
+      .live-dot  { display: inline-block; width: 12px; height: 12px;
+                   border-radius: 50%; background: #3D3D3D; }
+      .arrow-line { color: #D4783A; font-weight: 700; }
+    """)
+
+    full_html = f"<html><body>{''.join(pages_html)}</body></html>"
+    HTML(string=full_html).write_pdf(output_path, stylesheets=[css])
+```
+
+#### Telegram Send
+
+```python
+import telebot
+
+def send_pdf_to_telegram(bot, chat_id, pdf_path, summary_text):
+    bot.send_message(chat_id, summary_text)
+    with open(pdf_path, "rb") as f:
+        bot.send_document(chat_id, f, caption="DanceFlow Choreography Plan")
+```
+
+---
+
+### C. Secondary Output — Interactive HTML Dashboard (via `/web`)
+
+Sent only when user types `/web`. A self-contained HTML file with an **animated SVG stage** as the centrepiece.
+
+#### Key Interaction Design
+
+- The **stage SVG** is always visible at the top.
+- A **section selector** (row of clickable buttons, one per song section) sits below the stage.
+- Clicking a section button **animates** every dancer dot from their current position to that section's target position using the Web Animations API.
+- A **motion trail** (dashed orange line) fades out after the animation completes.
+- The formation name label below the stage updates live (e.g. `Diagonal → V-shape`).
+- A **movement list panel** to the right shows the beat-level cues for the selected section.
+- No separate formation cards section — the animated stage replaces all text-based transition descriptions.
+
+#### HTML Template
 
 ```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>DanceFlow — Choreography Plan</title>
-  <style>
-    :root {
-      --color-bg: #F9F7F4;
-      --color-surface: #FFFFFF;
-      --color-border: #E2DDD7;
-      --color-accent: #D4783A;
-      --color-low: #C8DCF0;
-      --color-medium: #5B9BD5;
-      --color-high: #E07B39;
-      --color-climax: #C0392B;
-      --color-text: #2C2C2C;
-      --color-muted: #8A8A8A;
-      --font-main: system-ui, -apple-system, sans-serif;
-    }
+<meta charset="UTF-8">
+<title>DanceFlow — Choreography Dashboard</title>
+<style>
+  :root {
+    --bg: #F9F7F4; --surface: #FFFFFF; --border: #E2DDD7;
+    --accent: #D4783A; --text: #2C2C2C; --muted: #8A8A8A;
+    --low: #9E9E9E; --medium: #5B9BD5; --high: #E07B39;
+    --climax: #C0392B; --rising: #7B68EE;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; background: var(--bg);
+         margin: 0; padding: 20px; color: var(--text); }
+  h1 { font-size: 20px; margin-bottom: 2px; }
+  .meta { font-size: 12px; color: var(--muted); margin-bottom: 24px; }
 
-    body {
-      font-family: var(--font-main);
-      background: var(--color-bg);
-      margin: 0;
-      padding: 24px;
-      color: var(--color-text);
-    }
+  /* Layout */
+  .main-grid { display: grid; grid-template-columns: 1fr 340px; gap: 20px; }
 
-    h1 { font-size: 22px; margin-bottom: 4px; }
-    .subtitle { font-size: 13px; color: var(--color-muted); margin-bottom: 32px; }
+  /* Stage panel */
+  .stage-panel { background: var(--surface); border: 1px solid var(--border);
+                 border-radius: 12px; padding: 20px; }
+  .stage-title { font-size: 13px; font-weight: 700; margin-bottom: 10px; }
+  #stage-svg { width: 100%; display: block; }
+  .formation-label { text-align: center; font-size: 13px; color: var(--accent);
+                     font-weight: 600; margin-top: 10px; min-height: 20px; }
 
-    /* Stage Map */
-    .stage-container {
-      background: var(--color-surface);
-      border: 1px solid var(--color-border);
-      border-radius: 12px;
-      padding: 20px;
-      margin-bottom: 28px;
-    }
-    .stage-svg { width: 100%; max-width: 600px; display: block; margin: 0 auto; }
+  /* Section buttons */
+  .section-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .sec-btn {
+    padding: 7px 14px; border: none; border-radius: 20px;
+    font-size: 12px; font-weight: 600; cursor: pointer;
+    color: #fff; transition: transform 0.15s, opacity 0.15s;
+  }
+  .sec-btn:hover { transform: scale(1.05); }
+  .sec-btn.active { outline: 3px solid var(--text); outline-offset: 2px; }
 
-    /* Song Timeline */
-    .timeline-bar { display: flex; height: 36px; border-radius: 8px; overflow: hidden;
-                    margin-bottom: 8px; }
-    .section-block { display: flex; align-items: center; justify-content: center;
-                     font-size: 11px; font-weight: 600; color: #fff;
-                     cursor: pointer; transition: opacity 0.2s; }
-    .section-block:hover { opacity: 0.8; }
+  /* Cue panel */
+  .cue-panel { background: var(--surface); border: 1px solid var(--border);
+               border-radius: 12px; padding: 20px; overflow-y: auto;
+               max-height: 500px; }
+  .cue-panel h3 { font-size: 14px; margin: 0 0 14px; }
+  .dancer-block { margin-bottom: 16px; }
+  .dancer-name { font-size: 12px; font-weight: 700; margin-bottom: 4px;
+                 padding: 3px 8px; background: #3D3D3D; color: #fff;
+                 border-radius: 4px; display: inline-block; }
+  .cue-row { font-size: 11px; padding: 3px 0;
+             border-bottom: 1px solid var(--border); }
+  .beat-tag { font-weight: 700; color: var(--accent); margin-right: 6px; }
 
-    /* Movement Grid */
-    .grid-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    .grid-table th { background: #3D3D3D; color: #fff; padding: 8px 12px;
-                     text-align: left; font-weight: 600; }
-    .grid-table td { border: 1px solid var(--color-border); padding: 10px 12px;
-                     vertical-align: top; cursor: pointer; }
-    .grid-table tr:hover td { background: #FFF8F2; }
-    .energy-low    { border-left: 4px solid var(--color-low); }
-    .energy-medium { border-left: 4px solid var(--color-medium); }
-    .energy-high   { border-left: 4px solid var(--color-high); }
-    .energy-climax { border-left: 4px solid var(--color-climax); }
-
-    .movement-cue { display: block; margin-bottom: 3px; }
-    .beat-tag { font-size: 10px; color: var(--color-muted);
-                font-weight: 700; margin-right: 4px; }
-
-    /* Formation Cards */
-    .formation-cards { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 28px; }
-    .formation-card {
-      background: var(--color-surface);
-      border: 1px solid var(--color-border);
-      border-radius: 10px;
-      padding: 16px;
-      min-width: 200px;
-      flex: 1;
-    }
-    .formation-card h4 { margin: 0 0 8px; font-size: 13px; }
-    .formation-before-after { display: flex; align-items: center; gap: 8px; }
-
-    /* Buttons */
-    .btn {
-      padding: 10px 20px; border: none; border-radius: 8px;
-      cursor: pointer; font-size: 13px; font-weight: 600;
-      margin-right: 10px; margin-top: 16px;
-    }
-    .btn-primary { background: #3D3D3D; color: #fff; }
-    .btn-primary:hover { background: #555; }
-    .btn-secondary { background: var(--color-border); color: var(--color-text); }
-
-    @media print {
-      .btn { display: none; }
-      body { padding: 10px; }
-    }
-  </style>
+  /* Timeline bar */
+  .timeline-wrap { margin-top: 20px; background: var(--surface);
+                   border: 1px solid var(--border); border-radius: 12px;
+                   padding: 16px; }
+  .timeline-bar { display: flex; height: 28px; border-radius: 6px;
+                  overflow: hidden; cursor: pointer; }
+  .tl-block { display: flex; align-items: center; justify-content: center;
+              font-size: 10px; font-weight: 600; color: #fff;
+              transition: opacity 0.2s; }
+  .tl-block:hover { opacity: 0.8; }
+</style>
 </head>
 <body>
 
-<h1>🎵 DanceFlow — Choreography Plan</h1>
-<p class="subtitle" id="subtitle-line">Loading plan…</p>
+<h1>🎵 DanceFlow — Choreography Dashboard</h1>
+<p class="meta" id="meta-line"></p>
 
-<!-- Stage Map -->
-<div class="stage-container">
-  <h3 style="margin-top:0">Starting Formation</h3>
-  <svg class="stage-svg" viewBox="0 0 500 300"
-       xmlns="http://www.w3.org/2000/svg" id="stage-svg">
-    <!-- Injected by buildStageMap() -->
-  </svg>
-</div>
+<div class="main-grid">
 
-<!-- Song Timeline -->
-<div class="stage-container">
-  <h3 style="margin-top:0">Song Timeline</h3>
-  <div class="timeline-bar" id="timeline-bar"></div>
-  <div id="timeline-labels" style="display:flex; font-size:10px;
-       color:var(--color-muted); margin-top:4px;"></div>
-</div>
+  <!-- Left: Stage + Section Controls -->
+  <div>
+    <div class="stage-panel">
+      <div class="stage-title">Stage Formation</div>
+      <svg id="stage-svg" viewBox="0 0 500 300"
+           xmlns="http://www.w3.org/2000/svg"></svg>
+      <div class="formation-label" id="formation-label">Starting Formation</div>
+      <div class="section-btns" id="section-btns"></div>
+    </div>
 
-<!-- Movement Grid -->
-<div class="stage-container">
-  <h3 style="margin-top:0">Movement Plan by Dancer</h3>
-  <table class="grid-table" id="movement-grid">
-    <!-- Injected by buildMovementGrid() -->
-  </table>
-</div>
-
-<!-- Formation Transitions -->
-<div class="stage-container">
-  <h3 style="margin-top:0">Formation Transitions</h3>
-  <div class="formation-cards" id="formation-cards">
-    <!-- Injected by buildFormationCards() -->
+    <!-- Timeline -->
+    <div class="timeline-wrap">
+      <div class="timeline-bar" id="timeline-bar"></div>
+    </div>
   </div>
-</div>
 
-<!-- Export Controls -->
-<button class="btn btn-primary" onclick="window.print()">Download PDF</button>
-<button class="btn btn-secondary" onclick="copyPlan()">Copy Full Plan</button>
+  <!-- Right: Movement Cues -->
+  <div class="cue-panel">
+    <h3 id="cue-title">Select a section to see movement cues</h3>
+    <div id="cue-content"></div>
+  </div>
+
+</div>
 
 <script>
-// ── DATA INJECTION ──────────────────────────────────────────────────────────
-// The following constants are injected by the agent at generation time.
-
+// ── INJECTED DATA ────────────────────────────────────────────────────────────
 const SONG_INFO = {
-  title: "Song Title",
-  artist: "Artist Name",
-  bpm: 96,
-  duration_s: 234,
+  title: "Song Title", artist: "Artist", bpm: 96, duration_s: 234,
   sections: [
-    // { label, start_s, end_s, energy, rhythm }
+    // { label, start_s, end_s, energy }
   ]
 };
 
 const DANCERS = [
-  // { id, label, x_norm, y_norm, facing, posture }
+  // { id, name, x_norm, y_norm }   ← starting positions
 ];
 
-const MOVEMENT_PLAN = [
-  // { dancer_id, section, start_s, end_s, movements: [{beat, time_s, action}] }
-];
+// Position of every dancer at every section
+// { section_label: [ {id, x_norm, y_norm}, … ] }
+const FORMATION_STATES = {};
 
-const FORMATION_TRANSITIONS = [
-  // { at_time_s, at_section, from_formation, to_formation, description }
-];
+// Beat-level movement plan
+// [ { dancer_id, section, movements: [{beat, time_s, action}] } ]
+const MOVEMENT_PLAN = [];
+// ─────────────────────────────────────────────────────────────────────────────
 
-// ── SECTION COLOURS ─────────────────────────────────────────────────────────
 const SECTION_COLORS = {
-  "Intro":   "#9E9E9E",
-  "Verse 1": "#5B9BD5",
-  "Verse 2": "#5B9BD5",
-  "Pre-Ch":  "#7B68EE",
-  "Chorus":  "#E07B39",
-  "Bridge":  "#C0392B",
-  "Outro":   "#9E9E9E"
+  "Intro": "#9E9E9E", "Verse 1": "#5B9BD5", "Verse 2": "#5B9BD5",
+  "Pre-Ch": "#7B68EE", "Chorus": "#E07B39", "Bridge": "#C0392B",
+  "Outro": "#9E9E9E"
 };
+const DEFAULT_COLOR = "#888";
 
-const ENERGY_CLASS = {
-  "low": "energy-low",
-  "medium": "energy-medium",
-  "high": "energy-high",
-  "peak": "energy-climax",
-  "rising": "energy-medium",
-  "fading": "energy-low"
-};
+const SVG_W = 500, SVG_H = 300, PAD = 40;
 
 // ── STAGE MAP ────────────────────────────────────────────────────────────────
-function buildStageMap() {
-  const svg = document.getElementById('stage-svg');
-  const W = 500, H = 300, PAD = 30;
+function toSVG(x_norm, y_norm) {
+  return {
+    x: PAD + x_norm * (SVG_W - PAD * 2),
+    y: PAD + y_norm * (SVG_H - PAD * 2)
+  };
+}
 
-  // Stage border
+function buildStage() {
+  const svg = document.getElementById("stage-svg");
   svg.innerHTML = `
-    <rect x="${PAD}" y="${PAD}" width="${W - PAD*2}" height="${H - PAD*2}"
-          fill="#F0ECE6" stroke="#C0BAB3" stroke-width="2" rx="4"/>
-    <text x="${W/2}" y="${H - 8}" text-anchor="middle"
+    <defs>
+      <marker id="arr" markerWidth="6" markerHeight="6"
+              refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 Z" fill="#D4783A"/>
+      </marker>
+    </defs>
+    <rect x="${PAD}" y="${PAD}"
+          width="${SVG_W-PAD*2}" height="${SVG_H-PAD*2}"
+          fill="#F5F2EE" stroke="#C0BAB3" stroke-width="2" rx="4"/>
+    <text x="${SVG_W/2}" y="${SVG_H-10}" text-anchor="middle"
           font-size="11" fill="#C0BAB3">STAGE FRONT</text>`;
 
-  DANCERS.forEach(d => {
-    const px = PAD + d.x_norm * (W - PAD*2);
-    const py = PAD + d.y_norm * (H - PAD*2);
+  // Trail group (drawn under dots)
+  svg.innerHTML += `<g id="trail-group"></g>`;
 
+  // Dancer dots
+  DANCERS.forEach(d => {
+    const p = toSVG(d.x_norm, d.y_norm);
     svg.innerHTML += `
-      <circle cx="${px}" cy="${py}" r="16"
-              fill="#3D3D3D" stroke="#fff" stroke-width="2"
-              style="cursor:pointer"
-              onclick="highlightDancer('${d.id}')"/>
-      <text x="${px}" y="${py + 4}" text-anchor="middle"
-            font-size="11" font-weight="700" fill="#fff">${d.id}</text>`;
+      <circle id="dot-${d.id}" cx="${p.x}" cy="${p.y}" r="18"
+              fill="#3D3D3D" stroke="#fff" stroke-width="2"/>
+      <text id="lbl-${d.id}" x="${p.x}" y="${p.y+4}"
+            text-anchor="middle" font-size="11"
+            font-weight="700" fill="#fff" pointer-events="none">
+        ${d.name || d.id}
+      </text>`;
+  });
+}
+
+// ── ANIMATE FORMATION ────────────────────────────────────────────────────────
+let currentSectionIdx = -1;
+
+function animateToSection(sectionLabel) {
+  const targets = FORMATION_STATES[sectionLabel];
+  if (!targets) return;
+
+  const trailGroup = document.getElementById("trail-group");
+  trailGroup.innerHTML = "";   // clear old trails
+
+  targets.forEach(target => {
+    const dot = document.getElementById(`dot-${target.id}`);
+    const lbl = document.getElementById(`lbl-${target.id}`);
+    if (!dot) return;
+
+    const fromX = parseFloat(dot.getAttribute("cx"));
+    const fromY = parseFloat(dot.getAttribute("cy"));
+    const tp = toSVG(target.x_norm, target.y_norm);
+
+    // Draw dashed trail line
+    const trail = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    trail.setAttribute("x1", fromX); trail.setAttribute("y1", fromY);
+    trail.setAttribute("x2", tp.x);  trail.setAttribute("y2", tp.y);
+    trail.setAttribute("stroke", "#D4783A");
+    trail.setAttribute("stroke-width", "1.5");
+    trail.setAttribute("stroke-dasharray", "5,4");
+    trail.setAttribute("marker-end", "url(#arr)");
+    trail.setAttribute("opacity", "0.7");
+    trailGroup.appendChild(trail);
+
+    // Animate dot + label using Web Animations API
+    const anim = dot.animate(
+      [{ cx: `${fromX}`, cy: `${fromY}` },
+       { cx: `${tp.x}`,  cy: `${tp.y}`  }],
+      { duration: 800, easing: "ease-in-out", fill: "forwards" }
+    );
+    // Web Animations API animates SVG presentation attrs via KeyframeEffect
+    // Fallback: also set attribute at end
+    anim.onfinish = () => {
+      dot.setAttribute("cx", tp.x);
+      dot.setAttribute("cy", tp.y);
+      lbl.setAttribute("x", tp.x);
+      lbl.setAttribute("y", tp.y + 4);
+      // Fade out trails after animation
+      trail.animate([{ opacity: "0.7" }, { opacity: "0" }],
+                    { duration: 600, delay: 200, fill: "forwards" });
+    };
+
+    lbl.animate(
+      [{ x: `${fromX}`, y: `${fromY+4}` },
+       { x: `${tp.x}`,  y: `${tp.y+4}`  }],
+      { duration: 800, easing: "ease-in-out", fill: "forwards" }
+    ).onfinish = () => {
+      lbl.setAttribute("x", tp.x);
+      lbl.setAttribute("y", tp.y + 4);
+    };
+  });
+
+  // Update formation label
+  const prevLabel = currentSectionIdx >= 0
+    ? SONG_INFO.sections[currentSectionIdx].label : "Start";
+  document.getElementById("formation-label").textContent =
+    `${prevLabel} → ${sectionLabel}`;
+}
+
+// ── SECTION BUTTONS ──────────────────────────────────────────────────────────
+function buildSectionButtons() {
+  const container = document.getElementById("section-btns");
+  SONG_INFO.sections.forEach((s, i) => {
+    const btn = document.createElement("button");
+    btn.className = "sec-btn";
+    btn.textContent = `${s.label} (${s.start_s}s)`;
+    btn.style.background = SECTION_COLORS[s.label] || DEFAULT_COLOR;
+    btn.onclick = () => {
+      document.querySelectorAll(".sec-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      animateToSection(s.label);
+      currentSectionIdx = i;
+      renderCues(s.label);
+    };
+    container.appendChild(btn);
   });
 }
 
 // ── TIMELINE BAR ─────────────────────────────────────────────────────────────
 function buildTimeline() {
-  const bar = document.getElementById('timeline-bar');
-  const labels = document.getElementById('timeline-labels');
+  const bar = document.getElementById("timeline-bar");
   const total = SONG_INFO.duration_s;
-
-  SONG_INFO.sections.forEach(s => {
+  SONG_INFO.sections.forEach((s, i) => {
     const pct = ((s.end_s - s.start_s) / total * 100).toFixed(1);
-    const col = SECTION_COLORS[s.label] || "#888";
-    bar.innerHTML += `
-      <div class="section-block"
-           style="width:${pct}%;background:${col}"
-           title="${s.label}: ${s.start_s}s–${s.end_s}s · ${s.energy} energy">
-        ${pct > 6 ? s.label : ''}
-      </div>`;
-    labels.innerHTML += `
-      <div style="width:${pct}%;text-align:center;overflow:hidden">
-        ${s.start_s}s
-      </div>`;
+    const div = document.createElement("div");
+    div.className = "tl-block";
+    div.style.width = pct + "%";
+    div.style.background = SECTION_COLORS[s.label] || DEFAULT_COLOR;
+    div.textContent = pct > 7 ? s.label : "";
+    div.title = `${s.label}: ${s.start_s}s–${s.end_s}s`;
+    div.onclick = () => {
+      document.querySelectorAll(".sec-btn")[i]?.click();
+    };
+    bar.appendChild(div);
   });
 }
 
-// ── MOVEMENT GRID ─────────────────────────────────────────────────────────────
-function buildMovementGrid() {
-  const table = document.getElementById('movement-grid');
-  const sections = SONG_INFO.sections.map(s => s.label);
+// ── MOVEMENT CUES ─────────────────────────────────────────────────────────────
+function renderCues(sectionLabel) {
+  const section = SONG_INFO.sections.find(s => s.label === sectionLabel);
+  document.getElementById("cue-title").textContent =
+    `${sectionLabel} — ${section ? section.start_s + "s–" + section.end_s + "s" : ""}`;
 
-  // Header row
-  let headerHTML = '<tr><th>Dancer</th>';
-  sections.forEach(s => { headerHTML += `<th>${s}</th>`; });
-  headerHTML += '</tr>';
-  table.innerHTML = headerHTML;
-
-  // One row per dancer
-  DANCERS.forEach(dancer => {
-    let rowHTML = `<tr><td><strong>${dancer.id}</strong>
-      ${dancer.label ? `<br><span style="font-size:11px;color:#888">${dancer.label}</span>` : ''}
-      </td>`;
-
-    sections.forEach(sectionLabel => {
-      const sectionInfo = SONG_INFO.sections.find(s => s.label === sectionLabel);
-      const plan = MOVEMENT_PLAN.find(
-        p => p.dancer_id === dancer.id && p.section === sectionLabel
-      );
-      const energyClass = ENERGY_CLASS[sectionInfo ? sectionInfo.energy : "low"] || "";
-
-      if (plan && plan.movements.length > 0) {
-        let cueHTML = plan.movements.slice(0, 4).map(m =>
-          `<span class="movement-cue">
-            <span class="beat-tag">B${m.beat}</span>${m.action}
-          </span>`
-        ).join('');
-        if (plan.movements.length > 4) {
-          cueHTML += `<span style="font-size:10px;color:#888">
-            +${plan.movements.length - 4} more…</span>`;
-        }
-        rowHTML += `<td class="${energyClass}" title="Click for full detail"
-                       onclick="showDetail('${dancer.id}','${sectionLabel}')">
-                      ${cueHTML}</td>`;
-      } else {
-        rowHTML += `<td style="color:#ccc;font-size:11px">—</td>`;
-      }
-    });
-
-    rowHTML += '</tr>';
-    table.innerHTML += rowHTML;
+  let html = "";
+  DANCERS.forEach(d => {
+    const plan = MOVEMENT_PLAN.find(
+      p => p.dancer_id === d.id && p.section === sectionLabel
+    );
+    const name = d.name || d.id;
+    html += `<div class="dancer-block">
+      <span class="dancer-name">${name}</span>`;
+    if (plan && plan.movements.length) {
+      plan.movements.forEach(m => {
+        html += `<div class="cue-row">
+          <span class="beat-tag">B${m.beat}</span>${m.action}
+        </div>`;
+      });
+    } else {
+      html += `<div class="cue-row" style="color:#ccc">No cues</div>`;
+    }
+    html += `</div>`;
   });
+  document.getElementById("cue-content").innerHTML = html;
 }
 
-// ── FORMATION CARDS ───────────────────────────────────────────────────────────
-function buildFormationCards() {
-  const container = document.getElementById('formation-cards');
-  FORMATION_TRANSITIONS.forEach(t => {
-    container.innerHTML += `
-      <div class="formation-card">
-        <h4>At ${t.at_time_s}s — ${t.at_section}</h4>
-        <div class="formation-before-after">
-          <span style="font-size:12px;background:#eee;padding:4px 8px;
-                border-radius:4px">${t.from_formation}</span>
-          <span style="font-size:18px;color:#D4783A">→</span>
-          <span style="font-size:12px;background:#3D3D3D;color:#fff;
-                padding:4px 8px;border-radius:4px">${t.to_formation}</span>
-        </div>
-        <p style="font-size:11px;color:#888;margin:8px 0 0">${t.description}</p>
-      </div>`;
-  });
-}
-
-// ── DETAIL MODAL ──────────────────────────────────────────────────────────────
-function showDetail(dancerId, sectionLabel) {
-  const plan = MOVEMENT_PLAN.find(
-    p => p.dancer_id === dancerId && p.section === sectionLabel
-  );
-  if (!plan) return;
-  const lines = plan.movements.map(
-    m => `Beat ${m.beat} (${m.time_s}s): ${m.action}`
-  ).join('\n');
-  alert(`${dancerId} — ${sectionLabel}\n\n${lines}`);
-}
-
-// ── HIGHLIGHT ─────────────────────────────────────────────────────────────────
-function highlightDancer(id) {
-  document.querySelectorAll('#movement-grid tr').forEach(row => {
-    row.style.opacity = row.querySelector('td')
-      && row.querySelector('td').textContent.trim().startsWith(id)
-      ? '1' : '0.3';
-  });
-}
-
-// ── COPY PLAN ─────────────────────────────────────────────────────────────────
-function copyPlan() {
-  let text = `DanceFlow Plan — ${SONG_INFO.title} by ${SONG_INFO.artist}\n`;
-  text += `BPM: ${SONG_INFO.bpm} | Duration: ${SONG_INFO.duration_s}s\n\n`;
-  MOVEMENT_PLAN.forEach(p => {
-    text += `${p.dancer_id} — ${p.section} (${p.start_s}s–${p.end_s}s)\n`;
-    p.movements.forEach(m => {
-      text += `  Beat ${m.beat} (${m.time_s}s): ${m.action}\n`;
-    });
-    text += '\n';
-  });
-  navigator.clipboard.writeText(text).then(
-    () => alert('Plan copied to clipboard!'),
-    () => alert('Copy failed. Please select and copy manually.')
-  );
-}
-
-// ── SUBTITLE ──────────────────────────────────────────────────────────────────
-function buildSubtitle() {
-  document.getElementById('subtitle-line').textContent =
-    `${SONG_INFO.title} · ${SONG_INFO.artist} · BPM ${SONG_INFO.bpm} · ` +
-    `${DANCERS.length} dancers · Generated by DanceFlow v1.0`;
+// ── META LINE ─────────────────────────────────────────────────────────────────
+function buildMeta() {
+  document.getElementById("meta-line").textContent =
+    `${SONG_INFO.title} · ${SONG_INFO.artist} · BPM ${SONG_INFO.bpm} ` +
+    `· ${SONG_INFO.duration_s}s · ${DANCERS.length} dancers · DanceFlow v2.0`;
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
-buildSubtitle();
-buildStageMap();
+buildMeta();
+buildStage();
+buildSectionButtons();
 buildTimeline();
-buildMovementGrid();
-buildFormationCards();
 </script>
 </body>
 </html>
-```
-
----
-
-### C. PDF Output
-
-When the user requests PDF (by sending `/pdf` or including `"PDF"` in their message):
-
-- The same HTML template is rendered headlessly via **Puppeteer** (Node.js) or **WeasyPrint** (Python).
-- PDF is generated with A3 landscape orientation to accommodate the wide movement grid.
-- Page breaks are inserted between the stage map, timeline, movement grid, and formation cards.
-- The PDF is sent directly as a Telegram document attachment.
-
-```python
-# PDF generation via WeasyPrint
-from weasyprint import HTML, CSS
-
-def export_pdf(html_content, output_path):
-    css = CSS(string="""
-        @page { size: A3 landscape; margin: 15mm; }
-        .btn { display: none !important; }
-        body { padding: 0; }
-    """)
-    HTML(string=html_content).write_pdf(output_path, stylesheets=[css])
 ```
 
 ---
@@ -796,155 +760,122 @@ def export_pdf(html_content, output_path):
 
 ```yaml
 skill_name: DanceFlow
-version: 1.0
+version: 2.0
 target_user: Dance instructors, choreographers, student dance groups, performing arts students
 real_world_problem: >
-  Planning timestamped movements for multiple dancers across a whole song is
-  time-consuming and hard to communicate. DanceFlow automates this by detecting
-  dancers in a formation photo and mapping movements to song sections.
+  Planning timestamped movements for multiple dancers across a full song is
+  time-consuming and hard to communicate visually. DanceFlow automates this
+  from a single formation photo and a song, delivering a PDF with formation
+  diagrams directly in Telegram.
 
 input_format:
   image:
-    type: still photo
-    format: [JPG, PNG, WebP]
-    content: all dancers in starting formation
+    type: still photo (JPG, PNG, WebP)
+    content: all dancers in starting formation, full-body view
   song:
-    options:
-      - MP3 file upload
-      - song name as text
-      - YouTube / Spotify / SoundCloud URL
+    options: [MP3 upload, song name as text, YouTube/Spotify/SoundCloud URL]
   optional:
     dance_style: hint for movement vocabulary
-    dancer_names: mapping of IDs to real names
-    stage_dimensions: in metres
-    output_format: HTML (default) or PDF
+    dancer_names: D1=Name, D2=Name, …
+    stage_dimensions: e.g. 8m x 6m
+    web_output: type /web to request animated HTML instead of PDF
 
 cv_methods:
-  - Image preprocessing (CLAHE, denoising, blur detection)
-  - Person detection (YOLOv8, COCO pretrained)
-  - Pose estimation (MediaPipe Pose, per-dancer crop)
-  - Spatial layout / formation classification (geometric clustering)
-  - Song structure analysis (librosa BPM + section detection)
+  - Image preprocessing: CLAHE brightness normalisation, denoising, blur detection
+  - Person detection: YOLOv8 pretrained (COCO) — counts and locates all dancers
+  - Pose estimation: MediaPipe Pose per dancer crop — posture and facing direction
+  - Formation classification: geometric clustering against known formation templates
+  - Song structure analysis: librosa BPM and section detection (MP3) or knowledge lookup
 
 workflow:
-  1: Validate and preprocess the formation image
-  2: Detect all dancers using YOLOv8; assign IDs left-to-right
-  3: Run MediaPipe Pose per dancer crop; record posture and facing
+  1: Validate and preprocess formation image
+  2: Detect all dancers (YOLOv8); assign D1–DN with normalised stage coordinates
+  3: Pose estimation per dancer; record posture and facing direction
   4: Classify starting formation from dancer coordinates
   5: Analyse song for BPM, section timestamps, and energy levels
-  6: Generate timestamped movement plan per dancer per section
-  7: Build HTML dashboard or PDF
-  8: Send output file + summary text to Telegram
+  6: Generate beat-level movement plan per dancer per section
+  7: Compute formation state (dancer positions) per section
+  8a (default): Render formation SVGs → rasterise to PNG → build PDF → send via Telegram
+  8b (/web): Build animated HTML dashboard → send HTML file via Telegram
 
 output_format:
-  default: interactive HTML dashboard (self-contained, no dependencies)
-  on_request: PDF (A3 landscape, printable)
-  summary_text: dancer count, BPM, formation, cue count
+  default: PDF (A3 landscape, sent as Telegram document)
+    pages:
+      - Cover with starting formation diagram
+      - Song overview timeline
+      - One page per section: movement table + formation diagram
+      - One page per formation transition: before/after SVG plots with movement arrows
+  on_request (/web): Self-contained interactive HTML with animated SVG stage
 
 limitation_handling:
-  blurry_image: warn user, attempt anyway, flag low-confidence detections
-  no_person_found: ask user to resend clearer full-body photo
-  unknown_song: use tempo and genre estimate; warn that structure is approximate
-  occluded_dancer: note partial detection; label as DX_partial
-  audio_upload_fail: fall back to song name lookup
-  more_than_10_dancers: cap at 10; warn user; suggest splitting into sub-groups
+  blurry_image: warn user with blur score; attempt processing; flag low-confidence detections
+  no_person_found: ask user to resend a clearer full-body frontal or elevated photo
+  unknown_song: estimate BPM from audio; mark section labels as approximate
+  occluded_dancer: label as DX_partial; note in output; suggest re-photo from above
+  more_than_10_dancers: cap at 10; notify user; suggest splitting into sub-groups
 
 ethical_boundary:
-  - System comments only on stage positions, movement timing, and formation design.
-  - System does NOT evaluate physical appearance, attractiveness, or body type.
-  - System does NOT identify individuals by face or personal data.
-  - System does NOT store any uploaded images or audio beyond the active session.
-  - Dancer labels are positional (D1–DN) unless the user explicitly provides names.
-  - All generated movement plans are suggestions, not prescriptions.
-    The choreographer retains full creative authority.
+  - Positions and timing only. No facial identification or biometric data collected.
+  - No appearance, body type, or attractiveness judgements of any kind.
+  - No image or audio stored beyond the active Telegram session.
+  - All movement plans are AI-generated suggestions. Final choreography authority
+    rests entirely with the choreographer.
+  - Dancers labelled positionally (D1–DN) unless names explicitly provided by user.
 ```
 
 ---
 
-## 9. Telegram Gateway Integration
+## 9. Telegram Gateway
 
-### Trigger Commands
+### Commands
 
 | Command | Action |
 |---------|--------|
-| `/start` | Welcome message + instructions |
-| `/plan` | Start a new choreography plan (prompts for image and song) |
-| `/pdf` | Re-export the last plan as PDF |
-| `/help` | List all commands and input formats |
+| `/start` | Welcome message and instructions |
+| `/plan` | Begin a new choreography plan |
+| `/web` | Re-send last plan as animated HTML dashboard |
+| `/help` | List commands and accepted input formats |
 
 ### Conversation Flow
 
 ```
-User: /plan
-Bot:  👋 Send me a photo of your dancers in their starting positions,
-      then add the song name, a Spotify/YouTube link, or upload an MP3.
-      You can also tell me the dance style (e.g. hip-hop, K-pop, contemporary).
+User:  /plan
 
-User: [sends photo] Shape of You - Ed Sheeran, hip-hop style, 5 dancers = Ana, Ben, Cara, Dev, Eva
+Bot:   👋 Send a photo of your dancers in their starting positions,
+       then tell me the song (name, link, or upload MP3).
+       Optional: dance style · dancer names · stage size.
 
-Bot:  🔍 Analysing formation image…
-      ✅ 5 dancers detected (D1–D5, left to right: Ana, Ben, Cara, Dev, Eva)
-      📐 Starting formation: Diagonal line
-      🎵 Song: Shape of You – Ed Sheeran (BPM: 96, 3:54)
-      ⚙️ Generating choreography plan…
+User:  [photo] Shape of You - Ed Sheeran · hip-hop · Ana Ben Cara Dev Eva
 
-Bot:  ✅ DanceFlow Plan Ready!
+Bot:   🔍 Analysing…
+       ✅ 5 dancers detected | Starting: Diagonal line
+       🎵 BPM: 96 | 3:54 | 9 sections
+       ⚙️ Building choreography plan and PDF…
 
-      🎵 Shape of You – Ed Sheeran · BPM 96 · 3:54
-      👥 5 dancers · Diagonal line starting formation
-      📋 147 movement cues across 9 sections
-      💃 Style: Hip-hop
+Bot:   ✅ DanceFlow Plan Ready
 
-      Open the attached HTML dashboard in any browser.
-      For a printable PDF, send /pdf
+       🎵 Shape of You – Ed Sheeran  |  BPM: 96  |  3:54
+       👥 5 dancers  |  Diagonal line → V-shape (Chorus) → Circle (Bridge)
+       📋 147 cues across 9 sections
 
-Bot:  [sends choreography_plan.html]
+       📄 PDF attached — open on any device.
+       Type /web for the animated interactive dashboard.
+
+Bot:   [sends choreography_plan.pdf]
 ```
 
 ---
 
-## 10. Limitation and Ethical Awareness
+## 10. Limitations and Ethical Awareness
 
-### Known Technical Limitations
+| Limitation | Mitigation |
+|------------|-----------|
+| Occlusion in formation photo | Detect visible dancers only; flag occluded; suggest elevated photo angle |
+| Blurry or dark image | Preprocessing corrects mild issues; severe blur triggers re-upload request |
+| Unknown/unreleased song | BPM estimated from audio; sections approximate; user can supply timestamps |
+| Pose estimation with baggy clothing | Confidence score shown per dancer; user can override posture |
+| Movement suggestions are generic | Framed as a starting plan; choreographer reviews and adjusts |
+| PDF rendering environment | WeasyPrint requires system fonts; cairosvg requires Cairo library |
+| More than 10 dancers | Capped at 10; user notified; sub-group split recommended |
 
-| Limitation | Cause | Mitigation |
-|------------|-------|-----------|
-| Occlusion in formation photo | Dancers standing behind others | Warn user; detect visible dancers only; suggest taking photo from elevated angle |
-| Blurry or dark images | Poor lighting in rehearsal space | Preprocessing corrects mild issues; severe blur triggers re-upload request |
-| Pose estimation inaccuracy | Loose or layered clothing hides body contours | Confidence score shown; user can override posture manually |
-| Unknown song structure | Obscure or unreleased tracks | BPM estimated from audio; section labels approximate; user can provide section timestamps |
-| Generated movements are suggestions | AI cannot choreograph perfectly | Always framed as a starting plan; choreographer must review and adjust |
-| MP3 audio upload size | Large files slow processing | Recommend sending first 60s clip or using song name instead |
-| More than 10 dancers | High complexity | Cap at 10 detected dancers; suggest splitting into groups |
-
-### Ethical Boundaries
-
-- **No facial identification.** The system uses bounding boxes and positions only. It never attempts to identify who a dancer is from their face.
-- **No appearance judgements.** The system describes positions, orientations, and movement sequences. It never comments on body type, attractiveness, weight, or physical characteristics.
-- **No biometric storage.** No image data, pose data, or audio is stored beyond the active session.
-- **Creative authority remains with the choreographer.** All output is labelled as AI-generated suggestions. The system does not claim that any movement plan is artistically correct or final.
-- **No competitive assessment.** The system does not rank or judge dancers' abilities relative to one another.
-
----
-
-## 11. What Makes a Strong DanceFlow Output?
-
-A strong output follows this structure:
-
-```
-Real user (choreographer / instructor)
-  → real visual problem (tracking multiple dancers across a full song)
-    → suitable CV technique (person detection + pose estimation + spatial analysis)
-      → structured output (timestamped movement plan per dancer)
-        → useful decision support (choreographer can walk into rehearsal with a ready plan)
-```
-
-The output should not only say:
-
-> I detected 5 dancers.
-
-It should help the choreographer answer:
-
-> At 1:03, when the chorus hits, where should Ana be standing, and what should she do with her arms?
-
-That is the standard expected for this skill.
+**Ethical boundaries:** No facial identification. No appearance judgements. No data stored beyond the session. All output is clearly labelled as AI-generated suggestions. Choreographer retains full creative authority.
