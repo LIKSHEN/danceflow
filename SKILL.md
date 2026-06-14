@@ -2,7 +2,7 @@
 name: danceflow
 description: "Accept a still image of all dancers in their starting formation + a song (MP3, name, or link) and produce a full timestamped choreography movement plan for every dancer. Primary output is a PDF (sent directly via Telegram) with embedded formation diagrams for every transition. A secondary interactive HTML dashboard with animated formation transitions is available on request via /web."
 tags: [dance, choreography, pose-estimation, person-detection, rhythm-analysis, movement-planning, telegram, pdf, animation]
-version: 2.0
+version: 2.1
 ---
 
 # DanceFlow — Formation-to-Choreography Planner
@@ -796,7 +796,8 @@ workflow:
   6: Generate beat-level movement plan per dancer per section
   7: Compute formation state (dancer positions) per section
   8a (default): Render formation SVGs → rasterise to PNG → build PDF → send via Telegram
-  8b (/web): Build animated HTML dashboard → send HTML file via Telegram
+  8b (fallback): If PDF toolchain fails (missing Pango/GTK/Cairo), generate animated HTML dashboard instead
+  8c (/web): Build animated HTML dashboard → send HTML file via Telegram
 
 output_format:
   default: PDF (A3 landscape, sent as Telegram document)
@@ -826,6 +827,14 @@ ethical_boundary:
 ---
 
 ## 9. Telegram Gateway
+
+### Telegram Delivery Pattern
+
+Send as **two separate messages** (large combined messages timeout on Telegram):
+1. **File first**: `send_message(message="MEDIA:/path/to/file.html", target="telegram")`
+2. **Summary second**: `send_message(message="✅ DanceFlow Plan Ready! ...", target="telegram")`
+
+Keep the summary under ~800 characters. Use plain markdown (bold, bullet points). No tables — Telegram auto-rewrites tables into messy row-group bullets.
 
 ### Commands
 
@@ -866,7 +875,43 @@ Bot:   [sends choreography_plan.pdf]
 
 ---
 
-## 10. Limitations and Ethical Awareness
+## 10. Pitfalls
+
+### Python `//` Is a JavaScript Comment (CRITICAL)
+
+When generating HTML/JS dashboards via Python f-strings, **never use `//` for integer division**. In JavaScript, `//` starts a single-line comment — everything after it is silently ignored, killing the rest of the script with no visible error.
+
+```python
+# ❌ BUG — embeds "// 60" as a JS comment, `ss` never declared, script dies silently
+html = f"... const mm = {duration} // 60, ss = ..."
+
+# ✅ CORRECT — use Math.floor() in the JS output
+html = f"... const mm = Math.floor({duration} / 60), ss = ..."
+```
+
+**Symptoms:** Browser shows blank page or only HTML/CSS renders (no interactivity). No console error because the JS is syntactically valid — it's just a comment that swallows the rest of the line.
+
+**Detection:** Search the generated `.html` file for `//` inside `<script>` blocks. If any appear that aren't intentional comments, fix them.
+
+### WeasyPrint + cairosvg on Windows
+
+WeasyPrint requires **Pango/GTK native DLLs** (not just pip packages). cairosvg requires **Cairo native libs** via `cffi`. On Windows:
+
+- `cffi` can break with `ModuleNotFoundError: No module named 'cffi.lock'` → fix: `pip install --force-reinstall cffi`
+- WeasyPrint will fail with `OSError: cannot load library 'libgobject-2.0-0.dll'` if GTK/Pango aren't installed → no quick fix; **fall back to HTML dashboard output**
+- The animated HTML dashboard is self-contained (no external deps) and often better UX anyway
+
+**Fallback policy:** If PDF generation fails for any reason, generate the animated HTML dashboard and deliver it with a note explaining PDF wasn't available. Never fail silently.
+
+### f-String Escaping in HTML/JS Generation
+
+When embedding JavaScript template literals (`${...}`) inside Python f-strings:
+- `${variable}` in JS template literals is NOT a Python f-string expression (Python uses `{variable}` without `$`), so it passes through safely
+- CSS braces `{ }` MUST be doubled: `{{ }}` in f-strings
+- JS object literals `{ }` MUST be doubled: `{{ }}` in f-strings
+- JS template literal backticks work fine in f-strings
+
+## 11. Limitations and Ethical Awareness
 
 | Limitation | Mitigation |
 |------------|-----------|
@@ -875,7 +920,7 @@ Bot:   [sends choreography_plan.pdf]
 | Unknown/unreleased song | BPM estimated from audio; sections approximate; user can supply timestamps |
 | Pose estimation with baggy clothing | Confidence score shown per dancer; user can override posture |
 | Movement suggestions are generic | Framed as a starting plan; choreographer reviews and adjusts |
-| PDF rendering environment | WeasyPrint requires system fonts; cairosvg requires Cairo library |
+| PDF rendering environment | WeasyPrint requires Pango/GTK native DLLs (Windows: often missing). Fall back to HTML dashboard. cairosvg requires Cairo via cffi — `pip install --force-reinstall cffi` fixes broken cffi.lock |
 | More than 10 dancers | Capped at 10; user notified; sub-group split recommended |
 
 **Ethical boundaries:** No facial identification. No appearance judgements. No data stored beyond the session. All output is clearly labelled as AI-generated suggestions. Choreographer retains full creative authority.
