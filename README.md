@@ -33,7 +33,7 @@ Agent: 🔍 5 dancers detected | Starting: Diagonal line
 ### Step 1: Clone or Download
 
 ```bash
-git clone https://github.com/<your-username>/choreolens.git
+git clone https://github.com/LIKSHEN/danceflow.git
 ```
 
 ### Step 2: Place the Skill File
