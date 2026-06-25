@@ -1,8 +1,6 @@
 ---
 name: danceflow
 description: "Accept a still image of all dancers in their starting formation + a song (MP3, name, or link) and produce a full timestamped choreography movement plan for every dancer. Primary output is a PDF (sent directly via Telegram) with embedded formation diagrams for every transition. A secondary interactive HTML dashboard with animated formation transitions is available on request via /web."
-tags: [dance, choreography, pose-estimation, person-detection, rhythm-analysis, movement-planning, telegram, pdf, animation]
-version: 2.1
 ---
 
 # DanceFlow — Formation-to-Choreography Planner
@@ -158,10 +156,11 @@ USER sends image + song via Telegram
   ├─ STEP 6  Analyse song → BPM, sections, energy levels
   ├─ STEP 7  Generate movement plan (beat-level, per dancer, per section)
   ├─ STEP 8  Compute formation state per section → (x_norm, y_norm) per dancer
+  ├─ STEP 9  Generate unique output filename (timestamp + song slug) to prevent overwriting previous runs
   │
   ├─ DEFAULT OUTPUT
   │    Render formation diagrams as SVG → rasterise to PNG via cairosvg
-  │    Build PDF (WeasyPrint): cover + section pages + transition pages
+  │    Build print HTML and render PDF with headless Chromium
   │    Send PDF to Telegram chat
   │
   └─ IF /web requested
@@ -190,7 +189,9 @@ Type /web for the interactive animated dashboard.
 
 ### B. Primary Output — PDF (sent directly in Telegram)
 
-Generated via **WeasyPrint** (Python). A3 landscape. Sent as `choreography_plan.pdf`.
+Generated from print-optimised HTML via **headless Chromium** using Playwright. This must match browser print layout as closely as possible. A3 landscape. Sent as `choreography_plan.pdf`.
+
+Do not use WeasyPrint for the production PDF path. The same HTML/CSS layout that works in browser print should be rendered by Chromium programmatically to avoid layout drift around flex rows, intrinsic image sizing, and page breaks.
 
 #### Page Structure
 
@@ -281,7 +282,10 @@ def render_formation_svg(dancers, stage_w=500, stage_h=300,
 #### PDF Generation
 
 ```python
-from weasyprint import HTML, CSS
+import base64
+import tempfile
+from pathlib import Path
+from playwright.sync_api import sync_playwright
 
 def build_pdf(song_info, dancers, movement_plan, formation_states, output_path):
     """
@@ -368,10 +372,11 @@ def build_pdf(song_info, dancers, movement_plan, formation_states, output_path):
             </p>
           </div>""")
 
-    css = CSS(string="""
+    css = """
       @page { size: A3 landscape; margin: 15mm; }
       body { font-family: system-ui, sans-serif; color: #2C2C2C; margin: 0; }
-      .page { page-break-after: always; padding: 10px; }
+      .page { break-after: page; page-break-after: always; padding: 10px; }
+      img { max-width: 100%; height: auto; object-fit: contain; break-inside: avoid; }
       .cover { text-align: center; padding-top: 40px; }
       .cover h1 { font-size: 28px; margin-bottom: 8px; }
       .cover h2 { font-size: 20px; color: #666; font-weight: 400; }
@@ -404,22 +409,124 @@ def build_pdf(song_info, dancers, movement_plan, formation_states, output_path):
       .live-dot  { display: inline-block; width: 12px; height: 12px;
                    border-radius: 50%; background: #3D3D3D; }
       .arrow-line { color: #D4783A; font-weight: 700; }
-    """)
+    """
 
-    full_html = f"<html><body>{''.join(pages_html)}</body></html>"
-    HTML(string=full_html).write_pdf(output_path, stylesheets=[css])
+    full_html = f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>{css}</style>
+</head>
+<body>{''.join(pages_html)}</body>
+</html>"""
+
+    with tempfile.NamedTemporaryFile("w", suffix=".html", encoding="utf-8", delete=False) as f:
+        f.write(full_html)
+        html_path = Path(f.name)
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page(viewport={"width": 1754, "height": 1240})
+            page.goto(html_path.resolve().as_uri(), wait_until="networkidle")
+            page.emulate_media(media="print")
+            page.pdf(
+                path=output_path,
+                format="A3",
+                landscape=True,
+                print_background=True,
+                prefer_css_page_size=True,
+                margin={"top": "15mm", "right": "15mm", "bottom": "15mm", "left": "15mm"},
+            )
+            browser.close()
+    finally:
+        html_path.unlink(missing_ok=True)
 ```
 
 #### Telegram Send
 
+The primary Telegram delivery path must upload the PDF as a document attachment. **Do NOT use `MEDIA:` prefix in message text** — it does not trigger file upload on this setup. Instead, use **direct Telegram Bot API via curl**:
+
+```bash
+source ~/AppData/Local/hermes/.env
+curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+  -d chat_id="${TELEGRAM_HOME_CHANNEL}" \
+  -d text="📄 Summary message here"
+curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+  -F chat_id="${TELEGRAM_HOME_CHANNEL}" \
+  -F document=@"/path/to/choreography_plan.pdf" \
+  -F caption="DanceFlow Choreography Plan"
+```
+
 ```python
 import telebot
+from pathlib import Path
 
 def send_pdf_to_telegram(bot, chat_id, pdf_path, summary_text):
+    path = Path(pdf_path).resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"PDF was not created: {path}")
+
     bot.send_message(chat_id, summary_text)
-    with open(pdf_path, "rb") as f:
-        bot.send_document(chat_id, f, caption="DanceFlow Choreography Plan")
+    with path.open("rb") as pdf_file:
+        bot.send_document(
+            chat_id=chat_id,
+            document=pdf_file,
+            visible_file_name="choreography_plan.pdf",
+            caption="DanceFlow Choreography Plan",
+        )
 ```
+
+If using the raw Telegram Bot API instead of `telebot`, send the file as multipart form data with the field name `document`:
+
+```python
+import requests
+from pathlib import Path
+
+def send_pdf_to_telegram_raw(bot_token, chat_id, pdf_path, summary_text):
+    path = Path(pdf_path).resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"PDF was not created: {path}")
+
+    requests.post(
+        f"https://api.telegram.org/bot{bot_token}/sendMessage",
+        data={"chat_id": chat_id, "text": summary_text},
+        timeout=30,
+    ).raise_for_status()
+
+    with path.open("rb") as pdf_file:
+        requests.post(
+            f"https://api.telegram.org/bot{bot_token}/sendDocument",
+            data={"chat_id": chat_id, "caption": "DanceFlow Choreography Plan"},
+            files={"document": ("choreography_plan.pdf", pdf_file, "application/pdf")},
+            timeout=120,
+        ).raise_for_status()
+```
+
+#### Filename Convention — Always Use Unique Names
+
+Every generated file (PDF or HTML) must have a unique filename per run. **Never hardcode a static filename** like `choreography_plan.pdf` — it will overwrite previous outputs.
+
+**Pattern:** `danceflow_{song_slug}_{YYYYMMDD_HHmmss}.{ext}`
+
+```python
+import re
+from datetime import datetime
+
+def make_output_filename(song_title, artist, extension="pdf"):
+    slug = re.sub(r'[^a-z0-9]+', '-', f"{song_title} {artist}".lower()).strip('-')
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"danceflow_{slug}_{timestamp}.{extension}"
+
+# Examples:
+# danceflow_shape-of-you-ed-sheeran_20260614_153022.pdf
+# danceflow_shape-of-you-ed-sheeran_20260614_153022.html
+```
+
+Apply this when:
+- Saving the PDF before sending to Telegram (the `output_path` parameter in `build_pdf`).
+- Saving the HTML dashboard file for `/web` delivery.
+- Naming the visible file in `bot.send_document` or raw Telegram API calls.
 
 ---
 
@@ -435,7 +542,9 @@ Sent only when user types `/web`. A self-contained HTML file with an **animated 
 - A **motion trail** (dashed orange line) fades out after the animation completes.
 - The formation name label below the stage updates live (e.g. `Diagonal → V-shape`).
 - A **movement list panel** to the right shows the beat-level cues for the selected section.
+- An **Export Plan** button downloads the injected choreography data as a JSON file for sharing or later editing.
 - No separate formation cards section — the animated stage replaces all text-based transition descriptions.
+- The dashboard export button must not generate a PDF. PDF generation remains a backend/server-side Chromium print workflow.
 
 #### HTML Template
 
@@ -457,6 +566,14 @@ Sent only when user types `/web`. A self-contained HTML file with an **animated 
          margin: 0; padding: 20px; color: var(--text); }
   h1 { font-size: 20px; margin-bottom: 2px; }
   .meta { font-size: 12px; color: var(--muted); margin-bottom: 24px; }
+  .topbar { display: flex; align-items: flex-start; justify-content: space-between;
+            gap: 16px; margin-bottom: 24px; }
+  .topbar .meta { margin-bottom: 0; }
+  .export-btn { border: 1px solid var(--border); background: var(--surface);
+                color: var(--text); border-radius: 8px; padding: 8px 12px;
+                font-size: 12px; font-weight: 700; cursor: pointer;
+                white-space: nowrap; }
+  .export-btn:hover { border-color: var(--accent); color: var(--accent); }
 
   /* Layout */
   .main-grid { display: grid; grid-template-columns: 1fr 340px; gap: 20px; }
@@ -506,8 +623,15 @@ Sent only when user types `/web`. A self-contained HTML file with an **animated 
 </head>
 <body>
 
-<h1>🎵 DanceFlow — Choreography Dashboard</h1>
-<p class="meta" id="meta-line"></p>
+<div class="topbar">
+  <div>
+    <h1>🎵 DanceFlow — Choreography Dashboard</h1>
+    <p class="meta" id="meta-line"></p>
+  </div>
+  <button class="export-btn" type="button" onclick="exportPlanData()">
+    Export Plan
+  </button>
+</div>
 
 <div class="main-grid">
 
@@ -744,6 +868,32 @@ function buildMeta() {
     `· ${SONG_INFO.duration_s}s · ${DANCERS.length} dancers · DanceFlow v2.0`;
 }
 
+// ── EXPORT DATA ───────────────────────────────────────────────────────────────
+function exportPlanData() {
+  const payload = {
+    exported_at: new Date().toISOString(),
+    song_info: SONG_INFO,
+    dancers: DANCERS,
+    formation_states: FORMATION_STATES,
+    movement_plan: MOVEMENT_PLAN
+  };
+  const slug = `${SONG_INFO.title || "danceflow"}-${SONG_INFO.artist || "plan"}`
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json"
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${slug || "danceflow-plan"}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // ── INIT ──────────────────────────────────────────────────────────────────────
 buildMeta();
 buildStage();
@@ -795,9 +945,8 @@ workflow:
   5: Analyse song for BPM, section timestamps, and energy levels
   6: Generate beat-level movement plan per dancer per section
   7: Compute formation state (dancer positions) per section
-  8a (default): Render formation SVGs → rasterise to PNG → build PDF → send via Telegram
-  8b (fallback): If PDF toolchain fails (missing Pango/GTK/Cairo), generate animated HTML dashboard instead
-  8c (/web): Build animated HTML dashboard → send HTML file via Telegram
+  8a (default): Render formation SVGs → rasterise to PNG → build print HTML → render PDF with Chromium → send via Telegram
+  8b (/web): Build animated HTML dashboard → send HTML file via Telegram
 
 output_format:
   default: PDF (A3 landscape, sent as Telegram document)
@@ -827,14 +976,6 @@ ethical_boundary:
 ---
 
 ## 9. Telegram Gateway
-
-### Telegram Delivery Pattern
-
-Send as **two separate messages** (large combined messages timeout on Telegram):
-1. **File first**: `send_message(message="MEDIA:/path/to/file.html", target="telegram")`
-2. **Summary second**: `send_message(message="✅ DanceFlow Plan Ready! ...", target="telegram")`
-
-Keep the summary under ~800 characters. Use plain markdown (bold, bullet points). No tables — Telegram auto-rewrites tables into messy row-group bullets.
 
 ### Commands
 
@@ -875,43 +1016,7 @@ Bot:   [sends choreography_plan.pdf]
 
 ---
 
-## 10. Pitfalls
-
-### Python `//` Is a JavaScript Comment (CRITICAL)
-
-When generating HTML/JS dashboards via Python f-strings, **never use `//` for integer division**. In JavaScript, `//` starts a single-line comment — everything after it is silently ignored, killing the rest of the script with no visible error.
-
-```python
-# ❌ BUG — embeds "// 60" as a JS comment, `ss` never declared, script dies silently
-html = f"... const mm = {duration} // 60, ss = ..."
-
-# ✅ CORRECT — use Math.floor() in the JS output
-html = f"... const mm = Math.floor({duration} / 60), ss = ..."
-```
-
-**Symptoms:** Browser shows blank page or only HTML/CSS renders (no interactivity). No console error because the JS is syntactically valid — it's just a comment that swallows the rest of the line.
-
-**Detection:** Search the generated `.html` file for `//` inside `<script>` blocks. If any appear that aren't intentional comments, fix them.
-
-### WeasyPrint + cairosvg on Windows
-
-WeasyPrint requires **Pango/GTK native DLLs** (not just pip packages). cairosvg requires **Cairo native libs** via `cffi`. On Windows:
-
-- `cffi` can break with `ModuleNotFoundError: No module named 'cffi.lock'` → fix: `pip install --force-reinstall cffi`
-- WeasyPrint will fail with `OSError: cannot load library 'libgobject-2.0-0.dll'` if GTK/Pango aren't installed → no quick fix; **fall back to HTML dashboard output**
-- The animated HTML dashboard is self-contained (no external deps) and often better UX anyway
-
-**Fallback policy:** If PDF generation fails for any reason, generate the animated HTML dashboard and deliver it with a note explaining PDF wasn't available. Never fail silently.
-
-### f-String Escaping in HTML/JS Generation
-
-When embedding JavaScript template literals (`${...}`) inside Python f-strings:
-- `${variable}` in JS template literals is NOT a Python f-string expression (Python uses `{variable}` without `$`), so it passes through safely
-- CSS braces `{ }` MUST be doubled: `{{ }}` in f-strings
-- JS object literals `{ }` MUST be doubled: `{{ }}` in f-strings
-- JS template literal backticks work fine in f-strings
-
-## 11. Limitations and Ethical Awareness
+## 10. Limitations and Ethical Awareness
 
 | Limitation | Mitigation |
 |------------|-----------|
@@ -920,7 +1025,35 @@ When embedding JavaScript template literals (`${...}`) inside Python f-strings:
 | Unknown/unreleased song | BPM estimated from audio; sections approximate; user can supply timestamps |
 | Pose estimation with baggy clothing | Confidence score shown per dancer; user can override posture |
 | Movement suggestions are generic | Framed as a starting plan; choreographer reviews and adjusts |
-| PDF rendering environment | WeasyPrint requires Pango/GTK native DLLs (Windows: often missing). Fall back to HTML dashboard. cairosvg requires Cairo via cffi — `pip install --force-reinstall cffi` fixes broken cffi.lock |
+| PDF rendering environment | Playwright/Chromium browser binaries must be installed; cairosvg requires Cairo library |
 | More than 10 dancers | Capped at 10; user notified; sub-group split recommended |
+
+## 11. Pitfalls
+
+### Always Load skill_view First
+
+The danceflow skill is updated frequently (PDF renderer changes, new reference files, workflow tweaks). Before processing any user request, **always call `skill_view('danceflow')`** to get the latest content. Do NOT assume the inline content injected at conversation start is the canonical version — it may be stale if the skill was patched between sessions.
+
+In a session where the user sent an image + song, the agent skipped `skill_view()` and spent significant time on WeasyPrint PDF generation, only to discover the skill had been updated to require Playwright/Chromium. Loading the skill first would have avoided the entire detour.
+
+### Song Reference Files
+
+Check `references/` for song-specific files (e.g. `references/song-shape-of-you.md`). These contain pre-computed BPM, section timestamps, energy levels, formation progressions, and movement vocabulary. Always load and use these when available — they are more accurate than estimating from scratch.
+
+### /web Command: Generate HTML Dashboard Separately
+
+When the user requests the interactive HTML dashboard (`/web`), generate it as a **separate deliverable** — do not assume the PDF generation step already produced it. The HTML dashboard uses a different template (animated SVG stage with Web Animations API) from the PDF (static formation diagrams). Both can coexist: send the PDF first, then the HTML dashboard as a second file if requested.
+
+### Playwright Chromium Installation
+
+On a fresh Windows environment, Playwright needs `pip install playwright` followed by `python -m playwright install chromium`. The browser binary is ~112 MB. Check availability with a quick `from playwright.sync_api import sync_playwright` test before attempting PDF generation.
+
+### Always Use Unique Filenames for Generated Files
+
+Every PDF and HTML file generated by DanceFlow must have a unique filename incorporating a timestamp and song slug (e.g. `danceflow_shape-of-you-ed-sheeran_20260614_153022.pdf`). Using a static filename like `choreography_plan.pdf` will overwrite the user's previous plans without warning. Generate the filename early (Step 9) and pass it through to all downstream functions — `build_pdf`, the HTML dashboard writer, and the Telegram send calls.
+
+### MSYS2 Python Shadowing
+
+If MSYS2 is installed (for cairosvg/Pango dependencies), its Python (`C:\msys64\ucrt64\bin\python`) may shadow the venv Python. Always ensure the venv `Scripts/` directory comes first in PATH: `export PATH="/c/Users/.../venv/Scripts:/c/msys64/ucrt64/bin:$PATH"`.
 
 **Ethical boundaries:** No facial identification. No appearance judgements. No data stored beyond the session. All output is clearly labelled as AI-generated suggestions. Choreographer retains full creative authority.
