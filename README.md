@@ -96,6 +96,11 @@ Tell Hermes where to find the skill by adding the directory to `external_dirs` i
 
 Restart Hermes. The skill should appear in your available skills list. Send a formation photo and a song name to test it.
 
+You may also verify whether the skill has been installed by:
+```
+hermes skills list
+```
+
 ### Dependencies (Runtime)
 
 The agent will need these Python packages available in its execution environment:
